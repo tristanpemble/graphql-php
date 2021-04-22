@@ -7,12 +7,13 @@ namespace GraphQL\Executor;
 use ArrayAccess;
 use Closure;
 use GraphQL\Executor\Promise\Adapter\SyncPromiseAdapter;
+use GraphQL\Executor\Promise\AsyncAdapter;
+use GraphQL\Executor\Promise\AsyncIterator;
 use GraphQL\Executor\Promise\Promise;
 use GraphQL\Executor\Promise\PromiseAdapter;
 use GraphQL\Language\AST\DocumentNode;
 use GraphQL\Type\Definition\ResolveInfo;
 use GraphQL\Type\Schema;
-
 use function is_array;
 use function is_object;
 
@@ -130,32 +131,94 @@ class Executor
      *
      * @api
      */
-    public static function promiseToExecute(
-        PromiseAdapter $promiseAdapter,
-        Schema $schema,
-        DocumentNode $documentNode,
-        $rootValue = null,
-        $contextValue = null,
-        $variableValues = null,
-        $operationName = null,
-        ?callable $fieldResolver = null
-    ) {
-        $factory = self::$implementationFactory;
+	public static function promiseToExecute(
+		PromiseAdapter $promiseAdapter,
+		Schema $schema,
+		DocumentNode $documentNode,
+		$rootValue = null,
+		$contextValue = null,
+		$variableValues = null,
+		$operationName = null,
+		?callable $fieldResolver = null
+	) {
+		$factory = self::$implementationFactory;
 
-        /** @var ExecutorImplementation $executor */
-        $executor = $factory(
-            $promiseAdapter,
-            $schema,
-            $documentNode,
-            $rootValue,
-            $contextValue,
-            $variableValues,
-            $operationName,
-            $fieldResolver ?? self::$defaultFieldResolver
-        );
+		/** @var ExecutorImplementation $executor */
+		$executor = $factory(
+			$promiseAdapter,
+			$schema,
+			$documentNode,
+			$rootValue,
+			$contextValue,
+			$variableValues,
+			$operationName,
+			$fieldResolver ?? self::$defaultFieldResolver
+		);
 
-        return $executor->doExecute();
-    }
+		return $executor->doExecute();
+	}
+
+	public static function subscribeToExecute(
+		AsyncAdapter $asyncAdapter,
+		Schema $schema,
+		DocumentNode $documentNode,
+		$rootValue = null,
+		$contextValue = null,
+		$variableValues = null,
+		$operationName = null,
+		?callable $fieldResolver = null,
+		?callable $subscribeFieldResolver = null
+	) {
+		$factory = self::$implementationFactory;
+
+		/** @var ExecutorImplementation $sourceExecutor */
+		$sourceExecutor = $factory(
+			$asyncAdapter,
+			$schema,
+			$documentNode,
+			$rootValue,
+			$contextValue,
+			$variableValues,
+			$operationName,
+			$subscribeFieldResolver ?? self::$defaultFieldResolver
+		);
+
+		$mapSourceToResponse = function ($payload) use (
+			$asyncAdapter,
+			$schema,
+			$documentNode,
+			$contextValue,
+			$variableValues,
+			$operationName,
+			$fieldResolver
+		) {
+			$factory = self::$implementationFactory;
+
+			/** @var ExecutorImplementation $executor */
+			$executor = $factory(
+				$asyncAdapter,
+				$schema,
+				$documentNode,
+				$payload,
+				$contextValue,
+				$variableValues,
+				$operationName,
+				$fieldResolver ?? self::$defaultFieldResolver
+			);
+
+			return $executor->doExecute();
+		};
+
+		return $sourceExecutor
+			->doExecuteSubscribe()
+			->then(function ($resultOrStream) use ($mapSourceToResponse, $asyncAdapter) {
+				if (!$resultOrStream instanceof AsyncIterator) {
+					return $resultOrStream;
+				}
+
+				return $asyncAdapter->mapAsyncIterator($resultOrStream, $mapSourceToResponse);
+			});
+	}
 
     /**
      * If a resolve function is not given, then a default resolve behavior is used

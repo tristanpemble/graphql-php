@@ -8,6 +8,7 @@ use GraphQL\Error\Error;
 use GraphQL\Executor\ExecutionResult;
 use GraphQL\Executor\Executor;
 use GraphQL\Executor\Promise\Adapter\SyncPromiseAdapter;
+use GraphQL\Executor\Promise\AsyncAdapter;
 use GraphQL\Executor\Promise\Promise;
 use GraphQL\Executor\Promise\PromiseAdapter;
 use GraphQL\Executor\ReferenceExecutor;
@@ -131,28 +132,8 @@ class GraphQL
         ?array $validationRules = null
     ): Promise {
         try {
-            if ($source instanceof DocumentNode) {
-                $documentNode = $source;
-            } else {
-                $documentNode = Parser::parse(new Source($source ?? '', 'GraphQL'));
-            }
-
-            // FIXME
-            if (count($validationRules ?? []) === 0) {
-                /** @var QueryComplexity $queryComplexity */
-                $queryComplexity = DocumentValidator::getRule(QueryComplexity::class);
-                $queryComplexity->setRawVariableValues($variableValues);
-            } else {
-                foreach ($validationRules as $rule) {
-                    if (! ($rule instanceof QueryComplexity)) {
-                        continue;
-                    }
-
-                    $rule->setRawVariableValues($variableValues);
-                }
-            }
-
-            $validationErrors = DocumentValidator::validate($schema, $documentNode, $validationRules);
+	        $documentNode = self::sourceToDocumentNode($source);
+	        $validationErrors = self::validate($schema, $documentNode, $variableValues, $validationRules);
 
             if (count($validationErrors) > 0) {
                 return $promiseAdapter->createFulfilled(
@@ -175,6 +156,47 @@ class GraphQL
                 new ExecutionResult(null, [$e])
             );
         }
+    }
+
+	public static function subscribeToExecute(
+		AsyncAdapter $asyncAdapter,
+		SchemaType $schema,
+		$source,
+		$rootValue = null,
+		$context = null,
+		$variableValues = null,
+		?string $operationName = null,
+		?callable $fieldResolver = null,
+		?callable $subscribeFieldResolver = null,
+		?array $validationRules = null
+	): Promise
+	{
+		try {
+			$documentNode = self::sourceToDocumentNode($source);
+			$validationErrors = self::validate($schema, $documentNode, $variableValues, $validationRules);
+
+			if (count($validationErrors) > 0) {
+				return $asyncAdapter->createFulfilled(
+					new ExecutionResult(null, $validationErrors)
+				);
+			}
+
+			return Executor::subscribeToExecute(
+				$asyncAdapter,
+				$schema,
+				$documentNode,
+				$rootValue,
+				$context,
+				$variableValues,
+				$operationName,
+				$fieldResolver,
+				$subscribeFieldResolver
+			);
+		} catch (Error $e) {
+			return $asyncAdapter->createFulfilled(
+				new ExecutionResult(null, [$e])
+			);
+		}
     }
 
     /**
@@ -274,4 +296,51 @@ class GraphQL
     {
         return self::getStandardDirectives();
     }
+
+	/**
+	 * @param string|\GraphQL\Language\AST\DocumentNode $source
+	 *
+	 * @return \GraphQL\Language\AST\DocumentNode
+	 * @throws \GraphQL\Error\SyntaxError
+	 */
+	private static function sourceToDocumentNode(string|DocumentNode $source): DocumentNode
+	{
+		if ($source instanceof DocumentNode) {
+			$documentNode = $source;
+		} else {
+			$documentNode = Parser::parse(new Source($source ?? '', 'GraphQL'));
+		}
+
+		return $documentNode;
+}
+
+	/**
+	 * @param \GraphQL\Type\Schema               $schema
+	 * @param \GraphQL\Language\AST\DocumentNode $documentNode
+	 * @param mixed                              $variableValues
+	 * @param array|null                         $validationRules
+	 *
+	 * @return \GraphQL\Error\Error[]
+	 */
+	private static function validate(SchemaType $schema, DocumentNode $documentNode, mixed $variableValues, ?array $validationRules): array
+	{
+		// FIXME
+		if (count($validationRules ?? []) === 0) {
+			/** @var QueryComplexity $queryComplexity */
+			$queryComplexity = DocumentValidator::getRule(QueryComplexity::class);
+			$queryComplexity->setRawVariableValues($variableValues);
+		} else {
+			foreach ($validationRules as $rule) {
+				if (!($rule instanceof QueryComplexity)) {
+					continue;
+				}
+
+				$rule->setRawVariableValues($variableValues);
+			}
+		}
+
+		$validationErrors = DocumentValidator::validate($schema, $documentNode, $validationRules);
+
+		return $validationErrors;
+	}
 }

@@ -29,13 +29,13 @@ class FieldDefinition
     /** @var array<int, FieldArgument> */
     public $args;
 
-    /**
-     * Callback for resolving field value given parent value.
-     * Mutually exclusive with `map`
-     *
-     * @var callable|null
-     */
-    public $resolveFn;
+	/**
+	 * Callback for resolving field value given parent value.
+	 * Mutually exclusive with `map`
+	 *
+	 * @var callable|null
+	 */
+	public $resolveFn;
 
     /**
      * Callback for mapping list of parent values to list of field values.
@@ -44,6 +44,13 @@ class FieldDefinition
      * @var callable|null
      */
     public $mapFn;
+
+	/**
+	 * Callback for generating a source event stream for subscriptions.
+	 *
+	 * @var callable|null
+	 */
+	public $subscribeFn;
 
     /** @var string|null */
     public $description;
@@ -72,10 +79,11 @@ class FieldDefinition
      */
     protected function __construct(array $config)
     {
-        $this->name      = $config['name'];
-        $this->resolveFn = $config['resolve'] ?? null;
-        $this->mapFn     = $config['map'] ?? null;
-        $this->args      = isset($config['args']) ? FieldArgument::createMap($config['args']) : [];
+        $this->name        = $config['name'];
+	    $this->resolveFn   = $config['resolve'] ?? null;
+	    $this->mapFn       = $config['map'] ?? null;
+	    $this->subscribeFn = $config['subscribe'] ?? null;
+	    $this->args        = isset($config['args']) ? FieldArgument::createMap($config['args']) : [];
 
         $this->description       = $config['description'] ?? null;
         $this->deprecationReason = $config['deprecationReason'] ?? null;
